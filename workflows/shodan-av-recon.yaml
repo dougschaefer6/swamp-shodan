@@ -1,0 +1,87 @@
+id: b10917df-caba-4040-843c-7768616ec3b2
+name: '@dougschaefer/shodan-av-recon'
+description: >-
+  One-command Shodan reconnaissance run for internet-exposed AV/IoT gear.
+  Confirms the account and remaining credits, counts how many matching devices
+  are exposed worldwide (free, no query credits) with facet rollups, then pulls
+  a trimmed page of the actual devices. Scope it with an optional city/country.
+  Passive OSINT only: it reads Shodan's index and never touches the devices.
+  Steps run sequentially because they share one model instance and would
+  otherwise contend on the per-model lock.
+tags: {}
+inputs:
+  properties:
+    instance:
+      type: string
+      default: shodan
+      description: Name of the @dougschaefer/shodan model instance to query
+    query:
+      type: string
+      default: 'product:"Crestron"'
+      description: Shodan search query (Shodan filter syntax)
+    city:
+      type: string
+      default: ""
+      description: Optional city filter to scope the recon
+    country:
+      type: string
+      default: ""
+      description: Optional 2-letter country code filter to scope the recon
+    facets:
+      type: string
+      default: country,org,port
+      description: Comma-separated facets for the count rollup
+    limit:
+      type: integer
+      default: 25
+      description: Cap on the number of device records returned by the search
+jobs:
+  - name: recon
+    description: Confirm credits, count exposure, then list exposed devices
+    steps:
+      - name: account
+        description: Confirm the account is reachable and show remaining credits
+        task:
+          type: model_method
+          modelIdOrName: ${{ inputs.instance }}
+          methodName: accountInfo
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+      - name: count
+        description: Count matching exposed devices with facet rollups (no query credits)
+        task:
+          type: model_method
+          modelIdOrName: ${{ inputs.instance }}
+          methodName: count
+          inputs:
+            query: ${{ inputs.query }}
+            city: ${{ inputs.city }}
+            country: ${{ inputs.country }}
+            facets: ${{ inputs.facets }}
+        dependsOn:
+          - step: account
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+      - name: search
+        description: Pull a trimmed page of the actual exposed devices
+        task:
+          type: model_method
+          modelIdOrName: ${{ inputs.instance }}
+          methodName: search
+          inputs:
+            query: ${{ inputs.query }}
+            city: ${{ inputs.city }}
+            country: ${{ inputs.country }}
+            limit: ${{ inputs.limit }}
+        dependsOn:
+          - step: count
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+    dependsOn: []
+    weight: 0
+version: 1
