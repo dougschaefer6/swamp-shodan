@@ -7,7 +7,6 @@ import {
   mapFacets,
   type MethodContext,
   type ShodanGlobalArgs,
-  shodanRequest,
   slugify,
 } from "./_client.ts";
 import { model } from "./shodan.ts";

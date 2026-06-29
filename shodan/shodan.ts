@@ -32,7 +32,7 @@ import {
  */
 export const model = {
   type: "@dougschaefer/shodan",
-  version: "2026.06.16.1",
+  version: "2026.06.29.1",
   globalArguments: ShodanGlobalArgsSchema,
   resources: {
     account: {

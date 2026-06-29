@@ -10,6 +10,12 @@ never connects to, logs into, or exploits a third-party device. The one active
 method, `requestScan`, asks Shodan to scan IPs **you own** and spends scan
 credits.
 
+## Installation
+
+```bash
+swamp extension pull @dougschaefer/shodan
+```
+
 ## Authentication
 
 One Shodan API key, resolved from vault and passed as a global argument. Store
