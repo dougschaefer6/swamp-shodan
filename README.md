@@ -22,29 +22,37 @@ One Shodan API key, resolved from vault and passed as a global argument. Store
 it first (piped from stdin so it never lands in shell history):
 
 ```bash
-pbpaste | swamp vault put asei shodan-api-key      # macOS
-# or:  printf %s "$KEY" | swamp vault put asei shodan-api-key
+pbpaste | swamp vault put my-vault shodan-api-key      # macOS
+# or:  printf %s "$KEY" | swamp vault put my-vault shodan-api-key
 ```
 
 Then create an instance whose global args reference the vault:
 
 ```bash
 swamp model create @dougschaefer/shodan shodan \
-  --global-arg 'apiKey=${{ vault.get(asei, shodan-api-key) }}'
+  --global-arg 'apiKey=${{ vault.get(my-vault, shodan-api-key) }}'
 ```
 
 ## Methods
 
-| Method        | Cost            | Purpose                                                         |
-| ------------- | --------------- | -------------------------------------------------------------- |
-| `accountInfo` | free            | Plan and remaining query/scan credits. Validates the key.      |
-| `search`      | 1 query credit / 100 results | Search and return trimmed device records + facets. |
-| `count`       | **free**        | Total results + facets without spending query credits.         |
-| `host`        | free*           | Full banner history, open ports, and CVEs for one IP.          |
-| `internetdb`  | **free, keyless** | Open ports, CPEs, tags, and CVEs for one IP (no API key).    |
-| `requestScan` | scan credits    | **Active.** Request an on-demand scan of IPs you own.          |
+| Method        | Cost                         | Purpose                                                   |
+| ------------- | ---------------------------- | --------------------------------------------------------- |
+| `accountInfo` | free                         | Plan and remaining query/scan credits. Validates the key. |
+| `search`      | 1 query credit / 100 results | Search and return trimmed device records + facets.        |
+| `count`       | **free**                     | Total results + facets without spending query credits.    |
+| `host`        | free*                        | Full banner history, open ports, and CVEs for one IP.     |
+| `internetdb`  | **free, keyless**            | Open ports, CPEs, tags, and CVEs for one IP (no API key). |
+| `requestScan` | scan credits                 | **Active.** Request an on-demand scan of IPs you own.     |
+| `scanStatus`  | free                         | Status of one scan (`id`), or every scan on the account.  |
 
 \* `host` lookups draw on your monthly allowance per Shodan's terms.
+
+`requestScan` returns a scan id immediately; the scan itself runs
+asynchronously. Poll it with `scanStatus --input 'id=<scanId>'` (which calls
+`GET /shodan/scan/{id}`) until `status` is `DONE`, then run `host` against the
+scanned IPs to read the fresh banners. Omit `id` to list every scan on the
+account (`GET /shodan/scans`). Each scan is written as a `scanStatus` resource
+named `scan-<id>` with `scanId`, `status`, `count`, and `created`.
 
 ## Examples
 
@@ -66,6 +74,9 @@ swamp model method run shodan host --input 'ip=192.0.2.4'
 
 # Keyless, zero-credit lookup
 swamp model method run shodan internetdb --input 'ip=192.0.2.4'
+
+# Check whether an on-demand scan has finished (free)
+swamp model method run shodan scanStatus --input 'id=EXAMPLESCANID'
 ```
 
 ## Workflow
@@ -81,10 +92,10 @@ swamp workflow run @dougschaefer/shodan-av-recon \
 
 ## Responsible use
 
-Querying Shodan is legal passive reconnaissance. Displaying results is fine —
-it is public data. Do **not** use the results to connect to or test devices you
-do not own or have written authorization to assess. Use `requestScan` only
-against your own address space.
+Querying Shodan is legal passive reconnaissance. Displaying results is fine — it
+is public data. Do **not** use the results to connect to or test devices you do
+not own or have written authorization to assess. Use `requestScan` only against
+your own address space.
 
 ## License
 

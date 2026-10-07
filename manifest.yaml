@@ -1,7 +1,7 @@
 manifestVersion: 1
 name: "@dougschaefer/shodan"
-version: "2026.06.29.1"
-description: "Query the Shodan internet-wide scan database to find and profile internet-exposed devices. Single API key resolved from vault. Read the account plan and remaining credits, run searches that return trimmed device records (IP, org, product, location, open port, CVEs) with facet rollups, count results without spending query credits, pull the full banner history for one IP, do keyless InternetDB lookups (ports, CPEs, tags, CVEs), and request on-demand scans of IPs you own. Built for AV/IoT exposure recon."
+version: "2026.10.07.1"
+description: "Query the Shodan internet-wide scan database to find and profile internet-exposed devices. Single API key resolved from vault. Read the account plan and remaining credits, run searches that return trimmed device records (IP, org, product, location, open port, CVEs) with facet rollups, count results without spending query credits, pull the full banner history for one IP, do keyless InternetDB lookups (ports, CPEs, tags, CVEs), request on-demand scans of IPs you own, and poll their status. Built for AV/IoT exposure recon."
 repository: https://github.com/dougschaefer6/swamp-shodan
 additionalFiles:
   - README.md

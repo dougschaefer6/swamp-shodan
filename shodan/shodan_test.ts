@@ -20,7 +20,10 @@ const g: ShodanGlobalArgs = {
 
 /** Swap `globalThis.fetch` for a stub; returns a restore function. */
 function mockFetch(
-  handler: (url: string, init?: RequestInit) => { status: number; body: string },
+  handler: (
+    url: string,
+    init?: RequestInit,
+  ) => { status: number; body: string },
 ): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -38,7 +41,9 @@ function fakeContext(): {
   ctx: MethodContext;
   writes: Array<{ spec: string; name: string; data: Record<string, unknown> }>;
 } {
-  const writes: Array<{ spec: string; name: string; data: Record<string, unknown> }> = [];
+  const writes: Array<
+    { spec: string; name: string; data: Record<string, unknown> }
+  > = [];
   const ctx: MethodContext = {
     globalArgs: g,
     logger: { info: () => {}, warning: () => {} },
@@ -55,15 +60,125 @@ const methods = model.methods as Record<string, any>;
 
 Deno.test("model exposes the expected methods and type", () => {
   assertEquals(model.type, "@dougschaefer/shodan");
-  for (const m of ["accountInfo", "search", "count", "host", "internetdb", "requestScan"]) {
+  for (
+    const m of [
+      "accountInfo",
+      "search",
+      "count",
+      "host",
+      "internetdb",
+      "requestScan",
+      "scanStatus",
+    ]
+  ) {
     assert(m in methods, `missing method ${m}`);
   }
+});
+
+Deno.test("model version ends its upgrades chain", () => {
+  const last = model.upgrades[model.upgrades.length - 1];
+  assertEquals(last.toVersion, model.version);
+  const old = { apiKey: "test-key" };
+  assertEquals(last.upgradeAttributes(old), old);
+});
+
+Deno.test("scanStatus with an id GETs that scan and writes one resource", async () => {
+  const calls: Array<{ url: string; method?: string }> = [];
+  const restore = mockFetch((url, init) => {
+    calls.push({ url, method: init?.method });
+    return {
+      status: 200,
+      body: JSON.stringify({
+        id: "ABC123",
+        status: "DONE",
+        count: 2,
+        created: "2026-10-07T10:00:00.000000",
+      }),
+    };
+  });
+  const { ctx, writes } = fakeContext();
+  let result: { dataHandles: DataHandle[] };
+  try {
+    result = await methods.scanStatus.execute({ id: "ABC123" }, ctx);
+  } finally {
+    restore();
+  }
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].method, "GET");
+  assertEquals(new URL(calls[0].url).pathname, "/shodan/scan/ABC123");
+  assertEquals(result.dataHandles.length, 1);
+  assertEquals(writes[0].spec, "scanStatus");
+  assertEquals(writes[0].name, "scan-ABC123");
+  assertEquals(writes[0].data.scanId, "ABC123");
+  assertEquals(writes[0].data.status, "DONE");
+  assertEquals(writes[0].data.count, 2);
+  assertEquals(writes[0].data.created, "2026-10-07T10:00:00.000000");
+});
+
+Deno.test("scanStatus without an id lists every scan", async () => {
+  let path = "";
+  const restore = mockFetch((url) => {
+    path = new URL(url).pathname;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        total: 2,
+        matches: [
+          {
+            id: "SCAN1",
+            status: "DONE",
+            size: 4,
+            created: "2026-10-06T09:00:00",
+          },
+          {
+            id: "SCAN2",
+            status: "PROCESSING",
+            size: 1,
+            created: "2026-10-07T09:00:00",
+          },
+        ],
+      }),
+    };
+  });
+  const { ctx, writes } = fakeContext();
+  try {
+    await methods.scanStatus.execute({}, ctx);
+  } finally {
+    restore();
+  }
+  assertEquals(path, "/shodan/scans");
+  assertEquals(writes.map((w) => w.name), ["scan-SCAN1", "scan-SCAN2"]);
+  assertEquals(writes[0].data.count, 4);
+  assertEquals(writes[1].data.status, "PROCESSING");
+});
+
+Deno.test("scanStatus surfaces an unknown scan id as an error", async () => {
+  const restore = mockFetch(() => ({
+    status: 404,
+    body: JSON.stringify({ error: "Scan not found" }),
+  }));
+  const { ctx, writes } = fakeContext();
+  try {
+    await assertRejects(
+      () => methods.scanStatus.execute({ id: "NOPE" }, ctx),
+      Error,
+      "Scan not found",
+    );
+  } finally {
+    restore();
+  }
+  assertEquals(writes.length, 0);
 });
 
 Deno.test("accountInfo maps Shodan credit fields", async () => {
   const restore = mockFetch(() => ({
     status: 200,
-    body: JSON.stringify({ plan: "dev", query_credits: 100, scan_credits: 100, unlocked: true }),
+    body: JSON.stringify({
+      plan: "dev",
+      query_credits: 100,
+      scan_credits: 100,
+      unlocked: true,
+    }),
   }));
   const { ctx, writes } = fakeContext();
   try {
@@ -85,7 +200,12 @@ Deno.test("search maps devices, flags truncation, and names the instance per met
       body: JSON.stringify({
         total: 260,
         matches: [
-          { ip_str: "192.0.2.10", port: 8081, product: "Crestron TSW-750", location: { city: "Palm Desert" } },
+          {
+            ip_str: "192.0.2.10",
+            port: 8081,
+            product: "Crestron TSW-750",
+            location: { city: "Example City" },
+          },
         ],
         facets: { org: [{ value: "Example ISP", count: 47 }] },
       }),
@@ -114,7 +234,10 @@ Deno.test("count names its instance distinctly from search", async () => {
   }));
   const { ctx, writes } = fakeContext();
   try {
-    await methods.count.execute({ query: 'product:"Crestron"', country: "US" }, ctx);
+    await methods.count.execute(
+      { query: 'product:"Crestron"', country: "US" },
+      ctx,
+    );
   } finally {
     restore();
   }
@@ -129,7 +252,11 @@ Deno.test("a failing API call throws before any data is written", async () => {
   }));
   const { ctx, writes } = fakeContext();
   try {
-    await assertRejects(() => methods.accountInfo.execute({}, ctx), Error, "401");
+    await assertRejects(
+      () => methods.accountInfo.execute({}, ctx),
+      Error,
+      "401",
+    );
   } finally {
     restore();
   }
@@ -146,7 +273,10 @@ Deno.test("composeQuery appends city and country filters with quoting", () => {
 });
 
 Deno.test("slugify normalizes, truncates, and falls back", () => {
-  assertEquals(slugify('product:"Crestron" country:"US"'), "product-Crestron-country-US");
+  assertEquals(
+    slugify('product:"Crestron" country:"US"'),
+    "product-Crestron-country-US",
+  );
   assertEquals(slugify("   "), "all");
   assert(slugify("x".repeat(80)).length <= 40);
 });
@@ -173,17 +303,101 @@ Deno.test("mapFacets flattens facet rows and tolerates non-objects", () => {
 });
 
 Deno.test("internetDbLookup returns null on 404 and parses on 200", async () => {
-  let restore = mockFetch(() => ({ status: 404, body: '{"detail":"No information"}' }));
+  let restore = mockFetch(() => ({
+    status: 404,
+    body: '{"detail":"No information"}',
+  }));
   try {
     assertEquals(await internetDbLookup(g, "192.0.2.1"), null);
   } finally {
     restore();
   }
-  restore = mockFetch(() => ({ status: 200, body: JSON.stringify({ ip: "192.0.2.2", ports: [22, 80] }) }));
+  restore = mockFetch(() => ({
+    status: 200,
+    body: JSON.stringify({ ip: "192.0.2.2", ports: [22, 80] }),
+  }));
   try {
-    const r = await internetDbLookup(g, "192.0.2.2") as { ip: string; ports: number[] };
+    const r = await internetDbLookup(g, "192.0.2.2") as {
+      ip: string;
+      ports: number[];
+    };
     assertEquals(r.ports, [22, 80]);
   } finally {
     restore();
+  }
+});
+
+Deno.test("scanStatus refuses a blank id instead of listing every scan", async () => {
+  const calls: Array<{ url: string }> = [];
+  const restore = mockFetch((url) => {
+    calls.push({ url });
+    return { status: 200, body: "{}" };
+  });
+  const { ctx } = fakeContext();
+  try {
+    await assertRejects(
+      () => methods.scanStatus.execute({ id: "   " }, ctx),
+      Error,
+      "id is blank",
+    );
+  } finally {
+    restore();
+  }
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("scanStatus surfaces an HTML 404 without crashing", async () => {
+  const restore = mockFetch(() => ({
+    status: 404,
+    body: "<html><body>404 Not Found</body></html>",
+  }));
+  const { ctx } = fakeContext();
+  try {
+    await assertRejects(
+      () => methods.scanStatus.execute({ id: "NOPE" }, ctx),
+      Error,
+      "HTTP 404",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("scanStatus skips id-less entries and tolerates a bad count", async () => {
+  const restore = mockFetch(() => ({
+    status: 200,
+    body: JSON.stringify({
+      total: 3,
+      matches: [{ status: "DONE" }, { id: "S1", status: "DONE", size: "x" }],
+    }),
+  }));
+  const { ctx, writes } = fakeContext();
+  try {
+    await methods.scanStatus.execute({}, ctx);
+  } finally {
+    restore();
+  }
+  assertEquals(writes.length, 1);
+  assertEquals(writes[0].data.scanId, "S1");
+  assertEquals(writes[0].data.count, 0);
+});
+
+Deno.test("a network error never exposes the API key", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (() =>
+    Promise.reject(
+      new TypeError(
+        "error sending request for url (https://api.shodan.io/shodan/scans?key=SECRETKEY123)",
+      ),
+    )) as typeof fetch;
+  const { ctx } = fakeContext();
+  try {
+    const err = await assertRejects(
+      () => methods.scanStatus.execute({}, ctx),
+      Error,
+    );
+    assertEquals(String(err).includes("SECRETKEY123"), false);
+  } finally {
+    globalThis.fetch = original;
   }
 });

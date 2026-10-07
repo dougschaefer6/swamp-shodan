@@ -16,7 +16,7 @@ import { z } from "npm:zod@4.3.6";
  * exploits a third-party device.
  *
  * The API key lives in `globalArguments` and resolves from vault, e.g.:
- *   apiKey: ${{ vault.get(asei, shodan-api-key) }}
+ *   apiKey: ${{ vault.get(my-vault, shodan-api-key) }}
  *
  * Plain `fetch` (HTTPS + JSON) is used, so the bundle has no native deps.
  */
@@ -76,6 +76,15 @@ export async function shodanRequest(
   let res: Response;
   try {
     res = await fetch(url, { method, headers, body, signal: ctrl.signal });
+  } catch (err) {
+    // The API key rides in the query string, and fetch's network errors quote
+    // the full URL, so rethrow without the original message.
+    const name = err instanceof Error ? err.name : "Error";
+    throw new Error(
+      name === "AbortError"
+        ? `Shodan ${method} ${path} timed out after ${g.timeoutMs}ms`
+        : `Shodan ${method} ${path} -> network error (${name})`,
+    );
   } finally {
     clearTimeout(timer);
   }

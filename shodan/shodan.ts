@@ -24,15 +24,17 @@ import {
  * keyless lookup of open ports, CPEs, tags, and known CVEs for one IP.
  *
  * Every one of those is passive OSINT. `requestScan` is the one active method:
- * it asks Shodan to (re)scan IP addresses you own and spends scan credits. The
- * model never connects to, logs into, or exploits a third-party device.
+ * it asks Shodan to (re)scan IP addresses you own and spends scan credits.
+ * `scanStatus` polls those scans (free, read-only) so a caller knows when the
+ * fresh banners are ready for `host` lookups. The model never connects to,
+ * logs into, or exploits a third-party device.
  *
  * Connection facts and the API key live in `globalArguments` so one model
  * definition is one Shodan account and the secret resolves from vault.
  */
 export const model = {
   type: "@dougschaefer/shodan",
-  version: "2026.06.29.1",
+  version: "2026.10.07.1",
   globalArguments: ShodanGlobalArgsSchema,
   resources: {
     account: {
@@ -127,7 +129,27 @@ export const model = {
       lifetime: "30d",
       garbageCollection: 10,
     },
+    scanStatus: {
+      description: "Status of one on-demand Shodan scan (free, read-only)",
+      schema: z.object({
+        scanId: z.string(),
+        status: z.string(),
+        count: z.number(),
+        created: z.string(),
+        capturedAt: z.iso.datetime(),
+      }),
+      lifetime: "7d",
+      garbageCollection: 10,
+    },
   },
+  upgrades: [
+    {
+      toVersion: "2026.10.07.1",
+      description:
+        "Add scanStatus method and resource; globalArguments unchanged",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   methods: {
     accountInfo: {
       description:
@@ -381,7 +403,7 @@ export const model = {
     },
     requestScan: {
       description:
-        "Ask Shodan to scan IP addresses ON DEMAND. ACTIVE: spends scan credits and only use against IPs you are authorized to scan. Pass a comma-separated list of IPs or CIDR ranges.",
+        "Ask Shodan to scan IP addresses ON DEMAND. ACTIVE: spends scan credits and only use against IPs you are authorized to scan. Pass a comma-separated list of IPs or CIDR ranges. Poll progress with scanStatus.",
       arguments: z.object({
         ips: z.string().describe("Comma-separated IPs or CIDR ranges to scan"),
       }),
@@ -421,6 +443,80 @@ export const model = {
           },
         );
         return { dataHandles: [handle] };
+      },
+    },
+    scanStatus: {
+      description:
+        "Check on-demand scan progress. With `id`, reports that one scan; without it, lists every scan on the account. Free and read-only.",
+      arguments: z.object({
+        id: z.string().optional().describe(
+          "Scan id returned by requestScan; omit to list all scans",
+        ),
+      }),
+      execute: async (
+        args: { id?: string },
+        context: MethodContext,
+      ): Promise<{ dataHandles: DataHandle[] }> => {
+        const id = args.id?.trim();
+        if (args.id !== undefined && !id) {
+          throw new Error(
+            "scanStatus: id is blank; omit it to list every scan on the account",
+          );
+        }
+        // The single-scan route is singular (/shodan/scan/{id}), as the official
+        // client uses; the OpenAPI spec's /shodan/scans/{id} returns 404.
+        const { data } = await shodanRequest(
+          context.globalArgs,
+          "GET",
+          id ? `/shodan/scan/${encodeURIComponent(id)}` : "/shodan/scans",
+        );
+        const d = (data ?? {}) as Record<string, unknown>;
+        // The list endpoint wraps scans in `matches` and reports `size`; the
+        // single-scan endpoint returns one object with `count`.
+        const scans = id ? [d] : Array.isArray(d.matches) ? d.matches : [];
+        const capturedAt = new Date().toISOString();
+        const handles: DataHandle[] = [];
+        if (!id) {
+          const total = Number(d.total);
+          if (Number.isFinite(total) && total > scans.length) {
+            context.logger.info(
+              "Shodan returned the first {n} of {total} scans (one page)",
+              { n: scans.length, total },
+            );
+          }
+        }
+        for (const raw of scans) {
+          const s = (raw ?? {}) as Record<string, unknown>;
+          const scanId = String(s.id ?? id ?? "");
+          if (!scanId) {
+            context.logger.info("Skipping a scan entry with no id", {});
+            continue;
+          }
+          const rawCount = Number(s.count ?? s.size ?? 0);
+          handles.push(
+            await context.writeResource(
+              "scanStatus",
+              `scan-${slugify(scanId, "unknown")}`,
+              {
+                scanId,
+                status: String(s.status ?? ""),
+                count: Number.isFinite(rawCount) ? rawCount : 0,
+                created: String(s.created ?? ""),
+                capturedAt,
+              },
+            ),
+          );
+          context.logger.info("Scan {id}: {status}", {
+            id: scanId,
+            status: String(s.status ?? "?"),
+          });
+        }
+        if (!id) {
+          context.logger.info("{n} scan(s) on the account", {
+            n: handles.length,
+          });
+        }
+        return { dataHandles: handles };
       },
     },
   },
